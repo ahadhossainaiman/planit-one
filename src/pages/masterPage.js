@@ -19,7 +19,33 @@ $w.onReady(async function () {
             });
         }
     });
+
+    // Safe Footer Links Binding
+    bindFooterLinks();
 });
+
+function bindFooterLinks() {
+    const footerRoutes = {
+        "#footerHome": "/",
+        "#footerCities": "/cities",
+        "#footerAttractions": "/attractions",
+        "#footerPartner": "/become-a-partner",
+        "#footerDashboard": "/dashboard",
+        "#footerAbout": "/about"
+    };
+
+    Object.entries(footerRoutes).forEach(([selector, route]) => {
+        try {
+            if ($w(selector)) {
+                $w(selector).onClick(() => {
+                    wixLocationFrontend.to(route);
+                });
+            }
+        } catch (e) {
+            // Selector not present on this page variant
+        }
+    });
+}
 
 async function validateSession() {
     let accessToken = local.getItem("access_token");

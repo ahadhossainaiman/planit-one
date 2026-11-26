@@ -180,7 +180,6 @@ async function loadItineraryDetails(itineraryId, token, attempt) {
         $w("#stopsRepeater").data = stopsData;
 
         await $w("#stopsRepeater").expand();
-        await $w("#stopsRepeater").show();
 
         console.log("Itinerary stops loaded:", stopsData.length);
 

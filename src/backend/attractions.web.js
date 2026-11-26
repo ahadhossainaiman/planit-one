@@ -6,6 +6,41 @@ import { webMethod, Permissions } from 'wix-web-module';
 const BASE_URL = "https://api.1planit.com/api/v1";
 
 
+const FALLBACK_IMAGE_URL =
+    "https://static.wixstatic.com/media/884307_e2271750386249eb8f1c0fee9582d1ff~mv2.png";
+
+async function verifyImageUrl(url) {
+    if (!url || typeof url !== "string") {
+        return FALLBACK_IMAGE_URL;
+    }
+
+    const trimmed = url.trim();
+    if (
+        (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) ||
+        trimmed.includes("null") ||
+        trimmed.includes("undefined")
+    ) {
+        return FALLBACK_IMAGE_URL;
+    }
+
+    // Google Place / usercontent photos often return 403 Forbidden due to referrer/token restrictions
+    // Perform a quick HEAD check to ensure the client browser won't get a broken image icon
+    try {
+        const headRes = await fetch(trimmed, {
+            method: "HEAD",
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+        });
+        if (headRes.ok) {
+            return trimmed;
+        }
+        return FALLBACK_IMAGE_URL;
+    } catch (e) {
+        return FALLBACK_IMAGE_URL;
+    }
+}
+
 /* ==================================================
    LIST (used by Attractions page)
 ================================================== */
@@ -61,29 +96,34 @@ export const getAttractions = webMethod(
                 throw new Error("Invalid pagination response.");
             }
 
-            // Only the fields the list cards need.
-            const attractions = result.data.attractions
-                .filter(item => item && typeof item === "object")
-                .map(item => ({
-                    id: item.id ?? null,
-                    name: toText(item.name),
-                    city_name: toText(item.city_name),
-                    description: toText(item.description).slice(0, 300),
-                    short_description: toText(item.short_description),
-                    tags: toText(item.tags),
-                    type: toText(item.type),
-                    image_url: toText(item.image_url),
-                    url: toText(item.url),
-                    affiliate_url: toText(item.affiliate_url),
-                    partner_type: toText(item.partner_type),
-                    bookability: toText(item.bookability),
-                    price_tier: toText(item.price_tier)
-                }));
+            // Verify images in parallel to eliminate broken 403 / 404 images
+            const verifiedAttractions = await Promise.all(
+                result.data.attractions
+                    .filter(item => item && typeof item === "object")
+                    .map(async item => {
+                        const verifiedImg = await verifyImageUrl(item.image_url);
+                        return {
+                            id: item.id ?? null,
+                            name: toText(item.name),
+                            city_name: toText(item.city_name),
+                            description: toText(item.description).slice(0, 300),
+                            short_description: toText(item.short_description),
+                            tags: toText(item.tags),
+                            type: toText(item.type),
+                            image_url: verifiedImg,
+                            url: toText(item.url),
+                            affiliate_url: toText(item.affiliate_url),
+                            partner_type: toText(item.partner_type),
+                            bookability: toText(item.bookability),
+                            price_tier: toText(item.price_tier)
+                        };
+                    })
+            );
 
             return {
                 success: true,
                 data: {
-                    attractions,
+                    attractions: verifiedAttractions,
                     pagination: {
                         page: pageNumber,
                         totalPages: Math.max(1, rawTotalPages)
@@ -98,9 +138,9 @@ export const getAttractions = webMethod(
     },
 
     {
-        // v2 on purpose: old cache (v1) only had the few old fields.
+        // v4 cache to flush out cached 403 Google photo URLs
         cache: {
-            tags: ["public-attractions-v2"],
+            tags: ["public-attractions-v4"],
             ttl: 300
         }
     }

@@ -11,10 +11,11 @@ const itemsPerPage = 20;
 
 
 // ==============================
-// Store Current Page Cities
+// Store Current Page Cities & Pagination
 // ==============================
 
 let allCities = [];
+let currentPagination = null;
 
 
 // ==============================
@@ -22,6 +23,12 @@ let allCities = [];
 // ==============================
 
 $w.onReady(async function () {
+
+    // Clear template mock cards immediately to prevent visual flashing during API load
+    $w("#citiesRepeater").data = [];
+    $w("#pageInfoTxt").text = "Loading cities...";
+    $w("#prevBtn").disable();
+    $w("#nextBtn").disable();
 
 
     // ==============================
@@ -136,10 +143,8 @@ $w.onReady(async function () {
         // ==============================
 
         if (!searchValue) {
-
-            $w("#citiesRepeater").data =
-                allCities;
-
+            $w("#citiesRepeater").data = allCities;
+            updatePaginationUI();
             return;
         }
 
@@ -172,24 +177,21 @@ $w.onReady(async function () {
         // Show Search Results
         // ==============================
 
-        // $w("#citiesRepeater").data =
-        //     filteredCities;
+        $w("#citiesRepeater").data = filteredCities;
 
-        // // ==============================
-        // // Search Result Message
-        // // ==============================
+        // Disable pagination buttons during search filter
+        $w("#prevBtn").disable();
+        $w("#nextBtn").disable();
 
-        // if (filteredCities.length === 0) {
+        // ==============================
+        // Search Result Message
+        // ==============================
 
-        //     $w("#pageInfoTxt").text =
-        //         "No cities found";
-
-        // } else {
-
-        //     $w("#pageInfoTxt").text =
-        //         `${filteredCities.length} cities found`;
-
-        // }
+        if (filteredCities.length === 0) {
+            $w("#pageInfoTxt").text = "No cities found";
+        } else {
+            $w("#pageInfoTxt").text = `${filteredCities.length} ${filteredCities.length === 1 ? "city" : "cities"} found`;
+        }
 
     });
 
@@ -332,62 +334,8 @@ async function loadCities() {
             // Pagination
             // ==============================
 
-            if (pagination) {
-
-
-                currentPage =
-                    pagination.page;
-
-
-                // Page Info
-
-                $w("#pageInfoTxt").text =
-                    `Page ${pagination.page} of ${pagination.totalPages}`;
-
-
-                // ==============================
-                // Previous Button
-                // ==============================
-
-                if (
-                    pagination.hasPreviousPage
-                ) {
-
-                    $w("#prevBtn").enable();
-
-                } else {
-
-                    $w("#prevBtn").disable();
-
-                }
-
-
-                // ==============================
-                // Next Button
-                // ==============================
-
-                if (
-                    pagination.hasNextPage
-                ) {
-
-                    $w("#nextBtn").enable();
-
-                } else {
-
-                    $w("#nextBtn").disable();
-
-                }
-
-            } else {
-
-
-                $w("#pageInfoTxt").text =
-                    `Page ${currentPage}`;
-
-
-            }
-
-
+            currentPagination = pagination;
+            updatePaginationUI();
         } else {
 
 
@@ -426,4 +374,31 @@ async function loadCities() {
 
     }
 
+}
+
+function updatePaginationUI() {
+    if (currentPagination) {
+        currentPage = currentPagination.page;
+        $w("#pageInfoTxt").text = `Page ${currentPagination.page} of ${currentPagination.totalPages}`;
+
+        if (currentPagination.hasPreviousPage) {
+            $w("#prevBtn").enable();
+        } else {
+            $w("#prevBtn").disable();
+        }
+
+        if (currentPagination.hasNextPage) {
+            $w("#nextBtn").enable();
+        } else {
+            $w("#nextBtn").disable();
+        }
+    } else {
+        $w("#pageInfoTxt").text = `Page ${currentPage}`;
+        if (currentPage > 1) {
+            $w("#prevBtn").enable();
+        } else {
+            $w("#prevBtn").disable();
+        }
+        $w("#nextBtn").enable();
+    }
 }
