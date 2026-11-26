@@ -1,0 +1,166 @@
+// backend/planit.jsw
+
+import wixData from 'wix-data';
+import { getSecret } from 'wix-secrets-backend';
+import { fetch } from 'wix-fetch';
+
+export async function generateItinerary(formData) {
+  try {
+    const apiKey = await getSecret('OPENAI_API_KEY');
+    if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
+
+    // Normalize basic fields
+    const withKids = normalizeKids(formData.travelingWithKids);
+    const interests = Array.isArray(formData.interests)
+      ? formData.interests.join(', ')
+      : (formData.interests || '');
+
+    // Dietary & special requests
+    const dietary = (formData.dietaryRestrictions && formData.dietaryRestrictions !== 'None')
+      ? formData.dietaryRestrictions
+      : 'none specified';
+
+    const special = (formData.specialRequests && formData.specialRequests.trim())
+      ? formData.specialRequests.trim()
+      : 'none';
+
+    // 🔹 Get matching venues from Wix Data (Venues collection)
+    const venues = await getMatchingVenues(formData, withKids);
+
+    // Turn venues into a compact text block for the model
+    const venuesText = venues.map(v => {
+      return `- ${v.name} | City: ${v.city} | Area: ${v.area} | Type: ${v.type} | Tags: ${v.tags} | Kids-friendly: ${v.kidsFriendly ? 'yes' : 'no'} | Price: ${v.priceTier} | URL: ${v.url}`;
+    }).join('\n');
+
+    // Extra kosher rule
+    const kosherNote = dietary.toLowerCase().includes('kosher')
+      ? `- If dietary restrictions include "Kosher", also prioritize Jewish heritage sites, synagogues, Jewish museums, and Jewish Quarter areas where relevant to the destination.\n`
+      : '';
+
+    const prompt = `
+Create a concise, realistic travel plan.
+
+Destination: ${formData.destination}
+Dates: ${formData.arrivalDate} to ${formData.departureDate}
+Travelers: ${formData.numTravelers} ${withKids ? '(with kids)' : '(no kids)'}
+Budget level: ${formData.budget}
+Main interests: ${interests}
+Dietary restrictions: ${dietary}
+Special interests / requests: ${special}
+
+You MUST choose places only from this curated venue list, unless absolutely necessary:
+
+${venuesText}
+
+Requirements:
+- Group the itinerary by LOCATION/AREA with <h4> titles (e.g. "<h4>Jewish Quarter</h4>").
+- Under each location, list 3–6 specific items in <ul><li>…</li></ul>.
+- When you recommend a place, use its exact name from the list above.
+- Respect dietary restrictions when suggesting food and drink.
+- If dietary restrictions cannot be fully met in this destination, clearly say so and suggest the closest alternatives.
+${kosherNote}- If special interests mention specific themes (e.g. "gothic tours", "Houdini"),
+  include 1–2 highly relevant activities or locations matching those themes from the list above.
+- Prefer family-friendly activities if traveling with kids is true.
+- Output pure HTML only (no markdown, no <html> or <body> tags).
+`;
+
+    // 🔹 Call OpenAI
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0.7,
+        messages: [
+          {
+            role: "system",
+            content: "You create practical travel plans grouped by location. Return pure HTML only (no markdown)."
+          },
+          { role: "user", content: prompt }
+        ]
+      })
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`OpenAI ${resp.status}: ${txt}`);
+    }
+
+    const data = await resp.json();
+    const html = (data?.choices?.[0]?.message?.content || '').trim();
+
+    const header = `
+      <h3 style="margin-bottom:12px;">Your Trip to ${escapeHtml(formData.destination || '')}</h3>
+      <p style="margin-bottom:18px;">
+        ${escapeHtml(formData.arrivalDate || '')} – ${escapeHtml(formData.departureDate || '')}
+        &nbsp;|&nbsp; ${escapeHtml(String(formData.numTravelers || ''))} travelers
+        &nbsp;|&nbsp; Budget: ${escapeHtml(formData.budget || '')}
+      </p>
+    `;
+
+    const wrapped = wrapSections(html);
+    return { itineraryHtml: header + wrapped };
+  } catch (e) {
+    return { error: e.message || String(e) };
+  }
+}
+
+// 🔹 Select best venues for this user from the "Venues" collection
+async function getMatchingVenues(formData, withKids) {
+  // Make sure your collection is named exactly "Venues"
+  let q = wixData.query("Venues")
+    .eq("city", formData.destination); // e.g. "Budapest", "Vienna"
+
+  // Filter by kids-friendly if needed
+  if (withKids) {
+    q = q.eq("kidsFriendly", true);
+  }
+
+  // Filter loosely by interests (tags field contains text)
+  if (Array.isArray(formData.interests) && formData.interests.length) {
+    formData.interests.forEach(tag => {
+      if (tag && tag.trim()) {
+        q = q.contains("tags", tag);
+      }
+    });
+  }
+
+  // Only active venues
+  q = q.eq("isActive", true);
+
+  // Sort by priorityBoost (and implicitly commission via your data design)
+  q = q
+    .descending("priorityBoost")
+    .limit(50); // keep list reasonable
+
+  const res = await q.find();
+  return res.items;
+}
+
+function wrapSections(html) {
+  // Split on <h4...> section starts and wrap each in a “card”
+  const parts = html.split(/(?=<h4\b)/i).filter(Boolean);
+  if (!parts.length) return html; // already one block; return as is
+  return parts.map(p => `
+    <div style="background:#f7f7f7;padding:16px;border-radius:12px;margin-bottom:14px;box-shadow:0 2px 6px rgba(0,0,0,0.08);">
+      ${p}
+    </div>
+  `).join('');
+}
+
+function normalizeKids(value) {
+  // Supports checkbox .checked boolean or dropdown text ("Yes"/"No")
+  if (typeof value === 'boolean') return value;
+  const v = String(value || '').toLowerCase();
+  return v.startsWith('y') || v === 'true' || v === '1';
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll('&','&amp;').replaceAll('<','&lt;')
+    .replaceAll('>','&gt;').replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
+}
